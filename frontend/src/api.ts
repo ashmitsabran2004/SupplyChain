@@ -52,11 +52,11 @@ export async function fetchGraph(at?: string): Promise<GeoJSON.FeatureCollection
   return res.json();
 }
 
-export async function predict(nodeId: string): Promise<{ delay_probability: number; drivers: ShapDriver[] }> {
+export async function predict(nodeId: string, severity = 0.72): Promise<{ delay_probability: number; drivers: ShapDriver[] }> {
   const res = await fetch(`${API}/predict`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ node_id: nodeId, disruption_event: 1, weather_severity: 0.72 }),
+    body: JSON.stringify({ node_id: nodeId, disruption_event: 1, weather_severity: severity }),
   });
   if (!res.ok) throw new Error("predict failed");
   return res.json();

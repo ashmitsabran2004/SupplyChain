@@ -20,11 +20,15 @@ It takes 180 seconds, with steps scheduled at 0:00, 0:40, 1:20, and 2:05. Every 
 
 ## Exact click sequence
 
-1. Open the running UI and wait until the status changes from API warm-up to live; the map appears once the lazy Mapbox component loads.
-2. Click **Demo: Shanghai cascade**. Watch the cascade waves and the sidebar's SHAP, dollar exposure, and SLA counts.
-3. Drag the **time travel** slider at the bottom to a different timestamp. The sidebar's selected-node snapshot updates with it.
-4. Click **Reroute to Rotterdam**. Read the baseline and alternative route scores in the sidebar and compare the two map lines.
-5. Click **GDS critical nodes** to toggle centrality highlighting.
+For the automated presentation, wait for the UI status to become live, then click **Start demo**. Captions run the same three-minute schedule above: Shanghai cascade at 0:00, impact explanation at 0:40, middle historical snapshot at 1:20, and Shanghai-to-Rotterdam route comparison at 2:05. Click **Stop demo** at any time.
+
+To present manually:
+
+1. Wait for the API status to become live. Click **Demo: Shanghai cascade** and watch the wave count, pulse rings, and exposure ticker.
+2. Read the **What-if disruption** slider value and top three SHAP drivers. To show a combined failure, click **Add second failed node**, then click another node on the map.
+3. Drag **time travel** to another timestamp, or use **Play** and choose 1×, 5×, or 25×. **LIVE** indicates an open WebSocket stream.
+4. Choose any source and destination in the route selectors, then click **Compare routes**. The dashed pink route is the cost/time baseline; the teal route is risk-weighted. Read the recommendation sentence.
+5. Search a port by name and click **Find**. Use the Heat, Edges, and Nodes toggles, plus **GDS critical nodes**, to focus the map.
 
 ## Likely judge questions
 
