@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import type { Map as MapboxMap, GeoJSONSource } from "mapbox-gl";
+import type { GeoJSONSource, Map as MapboxMap } from "mapbox-gl";
 import type { Reroute } from "./api";
+import SvgNetworkMap from "./SvgNetworkMap";
 
 type Props = {
   token: string;
@@ -14,25 +15,60 @@ type Props = {
 
 const emptyFc = (): GeoJSON.FeatureCollection => ({ type: "FeatureCollection", features: [] });
 const lineFrom = (legs: { lng: number; lat: number }[]): GeoJSON.Feature => ({
-  type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: legs.map((l) => [l.lng, l.lat]) },
+  type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: legs.map((leg) => [leg.lng, leg.lat]) },
 });
 
 export default function MapView({ token, graph, onNode, showCritical, highlight, showReroute, route }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapboxMap | null>(null);
   const [mapLoading, setMapLoading] = useState(true);
+  const [failure, setFailure] = useState<string | null>(null);
 
   useEffect(() => {
     let disposed = false;
+    let initialized = false;
+    let failed = false;
     let map: MapboxMap | null = null;
-    void Promise.all([import("mapbox-gl/esm"), import("mapbox-gl/dist/mapbox-gl.css")]).then(([mod]) => {
-      if (disposed || !container.current) return;
-      mod.setAccessToken(token);
-      const created = new mod.Map({ container: container.current, style: "mapbox://styles/mapbox/dark-v11", center: [54, 22], zoom: 1.55, projection: "globe" }) as unknown as MapboxMap;
-      map = created;
-      mapRef.current = created;
-      created.on("load", () => {
-        if (disposed) return;
+
+    const fail = (message: string, error?: unknown) => {
+      if (disposed || failed) return;
+      failed = true;
+      console.error(`[ChainSight] ${message}`, error ?? "No additional error details");
+      setFailure(message);
+      setMapLoading(false);
+      try {
+        map?.remove();
+      } catch (removeError) {
+        console.error("[ChainSight] Mapbox cleanup failed after renderer fallback.", removeError);
+      }
+      map = null;
+      mapRef.current = null;
+    };
+
+    if (!token || token.includes("replace_me")) {
+      fail("Mapbox token is missing or still a placeholder.");
+      return () => { disposed = true; };
+    }
+
+    try {
+      const probe = document.createElement("canvas");
+      if (!probe.getContext("webgl2")) {
+        fail("WebGL2 is unavailable in this browser; displaying the SVG network instead.");
+        return () => { disposed = true; };
+      }
+      if (!container.current) throw new Error("Map container element is unavailable.");
+      const { width, height } = container.current.getBoundingClientRect();
+      if (width <= 0 || height <= 0) throw new Error(`Map container has no drawable size (${width} × ${height}).`);
+    } catch (error) {
+      fail("Mapbox cannot initialize; displaying the SVG network instead.", error);
+      return () => { disposed = true; };
+    }
+
+    const initializeLayers = (created: MapboxMap) => {
+      if (disposed || initialized) return;
+      initialized = true;
+      try {
+        created.resize();
         created.addSource("nodes", { type: "geojson", data: emptyFc() });
         created.addSource("edges", { type: "geojson", data: emptyFc() });
         created.addSource("orig-route", { type: "geojson", data: emptyFc() });
@@ -44,28 +80,64 @@ export default function MapView({ token, graph, onNode, showCritical, highlight,
         created.addLayer({ id: "cascade", type: "circle", source: "nodes", filter: ["in", "id", ""], paint: { "circle-radius": 13, "circle-color": "#ff4d6d", "circle-opacity": 0.25, "circle-stroke-color": "#ff4d6d", "circle-stroke-width": 2 } });
         created.addLayer({ id: "orig-route", type: "line", source: "orig-route", paint: { "line-color": "#ff8fa3", "line-width": 3.5, "line-dasharray": [1.4, 1.2] } });
         created.addLayer({ id: "alt-route", type: "line", source: "alt-route", paint: { "line-color": "#3de0c5", "line-width": 3.5 } });
-        created.on("click", "nodes", (e) => { const id = e.features?.[0]?.properties?.id as string | undefined; if (id) onNode(id); });
+        created.on("click", "nodes", (event) => {
+          const id = event.features?.[0]?.properties?.id as string | undefined;
+          if (id) onNode(id);
+        });
         created.getCanvas().style.cursor = "pointer";
         setMapLoading(false);
-      });
-    }).catch((error: unknown) => { console.error("Mapbox failed to load", error); setMapLoading(false); });
-    return () => { disposed = true; map?.remove(); mapRef.current = null; };
+      } catch (error) {
+        fail("Mapbox style setup failed; displaying the SVG network instead.", error);
+      }
+    };
+
+    void (async () => {
+      try {
+        const [mod] = await Promise.all([import("mapbox-gl/esm"), import("mapbox-gl/dist/mapbox-gl.css")]);
+        if (disposed || !container.current) return;
+        mod.setAccessToken(token);
+        const created = new mod.Map({
+          container: container.current,
+          style: "mapbox://styles/mapbox/dark-v11",
+          center: [54, 22],
+          zoom: 1.55,
+          projection: "globe",
+        }) as unknown as MapboxMap;
+        map = created;
+        mapRef.current = created;
+        created.on("error", (event) => fail("Mapbox reported a style, tile, worker, or rendering error; displaying the SVG network instead.", event.error));
+        created.on("style.load", () => initializeLayers(created));
+        created.getCanvas().addEventListener("webglcontextlost", (event) => {
+          event.preventDefault();
+          fail("WebGL context was lost; displaying the SVG network instead.");
+        });
+      } catch (error) {
+        fail("Mapbox failed to load or initialize; displaying the SVG network instead.", error);
+      }
+    })();
+
+    return () => {
+      disposed = true;
+      map?.remove();
+      mapRef.current = null;
+    };
   }, [token, onNode]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map?.getSource("nodes")) return;
-    (map.getSource("nodes") as GeoJSONSource).setData({ type: "FeatureCollection", features: graph.features.filter((f) => f.geometry.type === "Point") });
-    (map.getSource("edges") as GeoJSONSource).setData({ type: "FeatureCollection", features: graph.features.filter((f) => f.geometry.type === "LineString") });
+    (map.getSource("nodes") as GeoJSONSource).setData({ type: "FeatureCollection", features: graph.features.filter((feature) => feature.geometry.type === "Point") });
+    (map.getSource("edges") as GeoJSONSource).setData({ type: "FeatureCollection", features: graph.features.filter((feature) => feature.geometry.type === "LineString") });
   }, [graph, mapLoading]);
-  useEffect(() => { const m = mapRef.current; if (m?.getLayer("critical")) m.setLayoutProperty("critical", "visibility", showCritical ? "visible" : "none"); }, [showCritical, mapLoading]);
-  useEffect(() => { const m = mapRef.current; if (m?.getLayer("cascade")) m.setFilter("cascade", highlight.size ? ["in", "id", ...Array.from(highlight)] : ["in", "id", ""]); }, [highlight, mapLoading]);
+  useEffect(() => { const map = mapRef.current; if (map?.getLayer("critical")) map.setLayoutProperty("critical", "visibility", showCritical ? "visible" : "none"); }, [showCritical, mapLoading]);
+  useEffect(() => { const map = mapRef.current; if (map?.getLayer("cascade")) map.setFilter("cascade", highlight.size ? ["in", "id", ...Array.from(highlight)] : ["in", "id", ""]); }, [highlight, mapLoading]);
   useEffect(() => {
-    const m = mapRef.current;
-    if (!m?.getSource("orig-route")) return;
-    (m.getSource("orig-route") as GeoJSONSource).setData(showReroute && route ? { type: "FeatureCollection", features: [lineFrom(route.original.legs)] } : emptyFc());
-    (m.getSource("alt-route") as GeoJSONSource).setData(showReroute && route ? { type: "FeatureCollection", features: [lineFrom(route.alternative.legs)] } : emptyFc());
+    const map = mapRef.current;
+    if (!map?.getSource("orig-route")) return;
+    (map.getSource("orig-route") as GeoJSONSource).setData(showReroute && route ? { type: "FeatureCollection", features: [lineFrom(route.original.legs)] } : emptyFc());
+    (map.getSource("alt-route") as GeoJSONSource).setData(showReroute && route ? { type: "FeatureCollection", features: [lineFrom(route.alternative.legs)] } : emptyFc());
   }, [route, showReroute, mapLoading]);
 
+  if (failure) return <SvgNetworkMap graph={graph} onNode={onNode} showCritical={showCritical} highlight={highlight} showReroute={showReroute} route={route} failureMessage={failure} />;
   return <><div ref={container} className="map" />{mapLoading && <div className="map-loading" role="status" aria-live="polite">Loading map…</div>}</>;
 }

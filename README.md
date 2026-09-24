@@ -11,7 +11,7 @@ docker compose up --build
 
 Then open [http://localhost:5173](http://localhost:5173).
 
-The only required secret is a [Mapbox access token](https://account.mapbox.com/access-tokens/). Put it in `.env` as `VITE_MAPBOX_TOKEN`; the example file supplies local defaults for the other settings. Neo4j (with Graph Data Science), the API, and map UI come up together. Startup seeds Neo4j and scores synthetic telemetry. The checked-in model is used by default; set `TRAIN_MODEL=1` to explicitly retrain it. A missing model is trained automatically.
+Add a [Mapbox public access token](https://account.mapbox.com/access-tokens/) as `VITE_MAPBOX_TOKEN` in `.env` to use the Mapbox basemap; the example file supplies local defaults for the other settings. If Mapbox, WebGL, or its assets are unavailable, the UI switches to an interactive SVG network view. Neo4j (with Graph Data Science), the API, and map UI come up together. Startup seeds Neo4j and scores synthetic telemetry. The checked-in model is used by default; set `TRAIN_MODEL=1` to explicitly retrain it. A missing model is trained automatically.
 
 ## Demo script (after the stack is up)
 

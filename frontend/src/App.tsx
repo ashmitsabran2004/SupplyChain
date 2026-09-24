@@ -11,6 +11,8 @@ import {
   type ShapDriver,
   type Simulation,
 } from "./api";
+import MapLoadBoundary from "./MapLoadBoundary";
+import SvgNetworkMap from "./SvgNetworkMap";
 
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN || "";
 const HUB_DEFAULT = "port-shanghai";
@@ -40,8 +42,6 @@ export default function App() {
   const [status, setStatus] = useState("loading network");
   const [apiReady, setApiReady] = useState(false);
   useEffect(() => { selectedRef.current = selected; }, [selected]);
-
-  const tokenMissing = !TOKEN || TOKEN.includes("replace_me");
 
   const loadGraph = useCallback(async (at?: string) => {
     const data = await fetchGraph(at);
@@ -170,22 +170,15 @@ export default function App() {
     return (f?.properties?.name as string | undefined) ?? selected ?? "click a hub";
   }, [graph, selected]);
 
-  if (tokenMissing) {
-    return (
-      <div className="brand" style={{ margin: 40 }}>
-        <h1>ChainSight</h1>
-        <p>Set VITE_MAPBOX_TOKEN in .env (copy .env.example). That is the only required secret.</p>
-      </div>
-    );
-  }
-
   if (!apiReady) return <div className="startup-loading"><h1>ChainSight</h1><p role="status" aria-live="polite">{status}…</p></div>;
 
   return (
     <>
-      <Suspense fallback={<div className="map-loading">Loading map component…</div>}>
-        <MapView token={TOKEN} graph={graph} onNode={onNode} showCritical={showCritical} highlight={highlight} showReroute={showReroute} route={route} />
-      </Suspense>
+      <MapLoadBoundary fallback={(error) => <SvgNetworkMap graph={graph} onNode={onNode} showCritical={showCritical} highlight={highlight} showReroute={showReroute} route={route} failureMessage={`Map component chunk failed: ${error.message}`} />}>
+        <Suspense fallback={<div className="map-loading">Loading map component…</div>}>
+          <MapView token={TOKEN} graph={graph} onNode={onNode} showCritical={showCritical} highlight={highlight} showReroute={showReroute} route={route} />
+        </Suspense>
+      </MapLoadBoundary>
       <div className="hud topbar">
         <div className="brand">
           <h1>ChainSight</h1>
