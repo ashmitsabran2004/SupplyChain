@@ -15,6 +15,10 @@
 * { box-sizing: border-box; }
 html, body, #root { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
 .map { position: absolute; inset: 0; }
+.map-loading, .startup-loading { position: fixed; z-index: 5; inset: 0; display: grid; place-content: center; gap: 8px; background: var(--bg); color: var(--text); text-align: center; }
+.startup-loading p, .map-loading { color: var(--muted); }
+.startup-loading h1 { margin: 0; }
+.map-loading { background: rgba(7, 11, 18, 0.92); }
 
 .hud {
   position: absolute;

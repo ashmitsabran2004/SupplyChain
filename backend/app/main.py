@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +28,38 @@ from app.tick_store import TickStore
 MODEL_DIR = Path(__file__).resolve().parents[1] / settings.model_dir
 DATA_DIR = Path(__file__).resolve().parents[1] / settings.data_dir
 
-app = FastAPI(title="ChainSight", version="0.1.0")
+_ready = False
+_startup_error: str | None = None
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    global _ready, _startup_error
+    try:
+        # GraphStore builds the synthetic graph at import; refresh its local indexes
+        # before touching the model or priming persisted telemetry.
+        store._rebuild_adj()
+        loaded_model = model()
+        stream()  # primes the tick cache and applies its latest risk scores
+        hub = "port-shanghai"
+        warmup = PredictRequest(node_id=hub, disruption_event=1, weather_severity=0.82, port_congestion=0.91)
+        proba, _ = loaded_model.predict(_tick_from_request(warmup))
+        store.update_node_risk(hub, proba)
+        store.update_route_risks_from_nodes()
+        propagate(hub, store.names(), store.sim_adjacency(), origin_risk=proba, max_hops=2)
+        store.original_and_alternative(hub, "port-rotterdam")
+        _ready = True
+        _startup_error = None
+    except Exception as exc:  # readiness remains false; operator can inspect logs
+        _ready = False
+        _startup_error = str(exc)
+        import logging
+
+        logging.getLogger(__name__).exception("ChainSight warm-up failed")
+    yield
+
+
+app = FastAPI(title="ChainSight", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -49,6 +81,17 @@ async def backend_headers(request: Request, call_next: Any) -> Any:
 _model: DelayModel | None = None
 _ticks: TickStore | None = None
 _stream: StreamEngine | None = None
+
+
+@app.get("/ready")
+async def readiness() -> dict[str, Any]:
+    if not _ready:
+        raise HTTPException(503, detail={"status": "warming", "error": _startup_error})
+    return {
+        "status": "ready",
+        "graph_backend": "neo4j" if store.using_neo4j else "local",
+        "centrality_backend": store.centrality_backend,
+    }
 
 
 def model() -> DelayModel:

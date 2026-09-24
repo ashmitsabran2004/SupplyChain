@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -37,10 +38,13 @@ class GraphStore:
             if nid in self.locations:
                 self.locations[nid]["betweenness"] = sc
                 self.locations[nid]["betweenness_norm"] = sc / mx
-        try:
-            self._connect_neo4j()
-        except Exception as exc:  # noqa: BLE001
-            log.warning("Neo4j unavailable (%s); using in-memory seed graph", exc)
+        if os.environ.get("CHAINSIGHT_DISABLE_NEO4J") == "1":
+            log.info("Neo4j connection disabled by CHAINSIGHT_DISABLE_NEO4J; using in-memory seed graph")
+        else:
+            try:
+                self._connect_neo4j()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Neo4j unavailable (%s); using in-memory seed graph", exc)
 
     def _rebuild_adj(self) -> None:
         self._weight_adj: dict[str, list[tuple[str, float]]] = {i: [] for i in self.locations}

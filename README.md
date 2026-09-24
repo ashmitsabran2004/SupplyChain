@@ -28,6 +28,8 @@ Programmatic check:
 python scripts/demo.py
 ```
 
+For the timed, three-minute judge walkthrough, target any running API with `python scripts/demo.py --walkthrough --base-url http://localhost:8000`. See [DEMO.md](DEMO.md) for the pitch, click sequence, and code-based answers to likely questions. `python scripts/parity.py` compares Neo4j/GDS results with the local algorithms when Neo4j is reachable; it was not run in this environment.
+
 To run the same endpoint checks without a listening API (for example in an isolated environment), use the in-process ASGI transport:
 
 ```bash
@@ -55,6 +57,8 @@ cd frontend && npm install && npm run dev
 
 If Neo4j is not running, the API loads the same synthetic network in memory and uses local betweenness + weighted Dijkstra. HTTP responses identify graph, centrality, and routing backends in `X-Graph-Backend`, `X-Centrality-Backend`, and (for `/reroute`) `X-Path-Backend`; the WebSocket metadata frame also identifies its backends. `graph/seed.py` and backend startup run GDS betweenness, and `/reroute` runs GDS Dijkstra for both cost/time-only baseline and risk-weighted alternative when Neo4j is connected.
 
+The API exposes `GET /ready`; it returns ready only after model loading, graph initialization, GDS projection setup when Neo4j is connected, the warm-up prediction/simulation/reroute, and tick-cache priming. The UI waits for this endpoint before fetching the graph or opening its stream. Compose uses the endpoint for the backend health check.
+
 ## Layout
 
 - `graph/` — seed, Cypher, GDS project, synthetic ~40 ports / 30 warehouses / 15 carriers / few hundred routes
@@ -71,6 +75,7 @@ If Neo4j is not running, the API loads the same synthetic network in memory and 
 | POST | `/reroute` | cost/time-only shortest path vs risk-weighted shortest path, cumulative risk, and identical-route flag |
 | GET | `/impact` | dollars at risk + SLA breaches (`units × delay_days × penalty × p`), optionally at `?at=` |
 | GET | `/graph` | GeoJSON (+ optional `?at=` scored SQLite timestamp for scrubbing) |
+| GET | `/ready` | readiness after startup warm-up |
 | WS | `/ws/stream?speed=50` | replay scored telemetry |
 
 Supporting libraries used to run the named stack: `neo4j` driver, `uvicorn`, `numpy`, `httpx`/`pytest`. SHAP also pulls `scikit-learn`.

@@ -1,6 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import mapboxgl, { Map as MapboxMap } from "mapbox-gl";
-import "mapbox-gl/dist/mapbox-gl.css";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchGraph,
   impact,
@@ -17,22 +15,17 @@ import {
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN || "";
 const HUB_DEFAULT = "port-shanghai";
 const REROUTE_TARGET = "port-rotterdam";
+const MapView = lazy(() => import("./MapView"));
 
 function usd(n: number): string {
   return n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 }
 
-function emptyFc(): GeoJSON.FeatureCollection {
-  return { type: "FeatureCollection", features: [] };
-}
-
 export default function App() {
-  const mapRef = useRef<MapboxMap | null>(null);
-  const containerRef = useRef<HTMLDivElement | null>(null);
   const selectedRef = useRef<string | null>(null);
   const manualScrubRef = useRef(false);
   const timestampsRef = useRef<string[]>([]);
-  const [graph, setGraph] = useState<GeoJSON.FeatureCollection>(emptyFc());
+  const [graph, setGraph] = useState<GeoJSON.FeatureCollection>({ type: "FeatureCollection", features: [] });
   const [timestamps, setTimestamps] = useState<string[]>([]);
   const [cursor, setCursor] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
@@ -45,6 +38,7 @@ export default function App() {
   const [showReroute, setShowReroute] = useState(false);
   const [route, setRoute] = useState<Reroute | null>(null);
   const [status, setStatus] = useState("loading network");
+  const [apiReady, setApiReady] = useState(false);
   useEffect(() => { selectedRef.current = selected; }, [selected]);
 
   const tokenMissing = !TOKEN || TOKEN.includes("replace_me");
@@ -60,173 +54,19 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    void loadGraph().then(() => setStatus("live"));
-  }, [loadGraph]);
-
-  useEffect(() => {
-    if (tokenMissing || !containerRef.current || mapRef.current) return;
-    mapboxgl.accessToken = TOKEN;
-    const map = new mapboxgl.Map({
-      container: containerRef.current,
-      style: "mapbox://styles/mapbox/dark-v11",
-      center: [54, 22],
-      zoom: 1.55,
-      projection: "globe",
-    });
-    mapRef.current = map;
-    map.on("load", () => {
-      map.addSource("nodes", { type: "geojson", data: emptyFc() });
-      map.addSource("edges", { type: "geojson", data: emptyFc() });
-      map.addSource("orig-route", { type: "geojson", data: emptyFc() });
-      map.addSource("alt-route", { type: "geojson", data: emptyFc() });
-      map.addLayer({
-        id: "risk-heat",
-        type: "heatmap",
-        source: "nodes",
-        maxzoom: 6,
-        paint: {
-          "heatmap-weight": ["get", "predicted_risk"],
-          "heatmap-intensity": 1.1,
-          "heatmap-radius": 32,
-          "heatmap-color": [
-            "interpolate",
-            ["linear"],
-            ["heatmap-density"],
-            0, "rgba(0,0,0,0)",
-            0.2, "#12355b",
-            0.45, "#3de0c5",
-            0.7, "#ffb020",
-            1, "#ff4d6d",
-          ],
-        },
-      });
-      map.addLayer({
-        id: "edges",
-        type: "line",
-        source: "edges",
-        paint: {
-          "line-color": [
-            "interpolate", ["linear"], ["get", "predicted_risk"],
-            0.05, "#1f3b63",
-            0.35, "#6ea8ff",
-            0.7, "#ffb020",
-            1, "#ff4d6d",
-          ],
-          "line-width": 1.1,
-          "line-opacity": 0.45,
-        },
-      });
-      map.addLayer({
-        id: "nodes",
-        type: "circle",
-        source: "nodes",
-        paint: {
-          "circle-radius": ["interpolate", ["linear"], ["get", "predicted_risk"], 0, 3.2, 1, 9],
-          "circle-color": [
-            "interpolate", ["linear"], ["get", "predicted_risk"],
-            0.1, "#3de0c5",
-            0.45, "#ffb020",
-            0.8, "#ff4d6d",
-          ],
-          "circle-stroke-width": 1,
-          "circle-stroke-color": "#071018",
-        },
-      });
-      map.addLayer({
-        id: "critical",
-        type: "circle",
-        source: "nodes",
-        filter: ["==", ["get", "critical"], true],
-        layout: { visibility: "none" },
-        paint: {
-          "circle-radius": 11,
-          "circle-color": "transparent",
-          "circle-stroke-width": 2,
-          "circle-stroke-color": "#3de0c5",
-        },
-      });
-      map.addLayer({
-        id: "cascade",
-        type: "circle",
-        source: "nodes",
-        filter: ["in", "id", ""],
-        paint: {
-          "circle-radius": 13,
-          "circle-color": "#ff4d6d",
-          "circle-opacity": 0.25,
-          "circle-stroke-color": "#ff4d6d",
-          "circle-stroke-width": 2,
-        },
-      });
-      map.addLayer({
-        id: "orig-route",
-        type: "line",
-        source: "orig-route",
-        paint: { "line-color": "#ff8fa3", "line-width": 3.5, "line-dasharray": [1.4, 1.2] },
-      });
-      map.addLayer({
-        id: "alt-route",
-        type: "line",
-        source: "alt-route",
-        paint: { "line-color": "#3de0c5", "line-width": 3.5 },
-      });
-      map.on("click", "nodes", (e) => {
-        const id = e.features?.[0]?.properties?.id as string | undefined;
-        if (id) void onNode(id);
-      });
-      map.getCanvas().style.cursor = "pointer";
-    });
-    return () => {
-      map.remove();
-      mapRef.current = null;
+    let active = true;
+    const check = async () => {
+      while (active) {
+        try {
+          const res = await fetch(`${import.meta.env.VITE_API_URL ?? "http://localhost:8000"}/ready`);
+          if (res.ok) { await loadGraph(); if (active) { setApiReady(true); setStatus("live"); } return; }
+        } catch { /* API may still be starting */ }
+        if (active) { setStatus("waiting for API warm-up"); await new Promise((resolve) => setTimeout(resolve, 1500)); }
+      }
     };
-  }, [tokenMissing]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map?.getSource("nodes")) return;
-    const nodes = graph.features.filter((f) => f.geometry.type === "Point");
-    const edges = graph.features.filter((f) => f.geometry.type === "LineString");
-    (map.getSource("nodes") as mapboxgl.GeoJSONSource).setData({ type: "FeatureCollection", features: nodes });
-    (map.getSource("edges") as mapboxgl.GeoJSONSource).setData({ type: "FeatureCollection", features: edges });
-  }, [graph]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map?.getLayer("critical")) return;
-    map.setLayoutProperty("critical", "visibility", showCritical ? "visible" : "none");
-  }, [showCritical]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map?.getLayer("cascade")) return;
-    const ids = ["in", "id", ...Array.from(highlight)];
-    map.setFilter("cascade", highlight.size ? ids : ["in", "id", ""]);
-  }, [highlight]);
-
-  const lineFrom = (legs: { lng: number; lat: number }[]): GeoJSON.Feature => ({
-    type: "Feature",
-    properties: {},
-    geometry: { type: "LineString", coordinates: legs.map((l) => [l.lng, l.lat]) },
-  });
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map?.getSource("orig-route")) return;
-    if (!showReroute || !route) {
-      (map.getSource("orig-route") as mapboxgl.GeoJSONSource).setData(emptyFc());
-      (map.getSource("alt-route") as mapboxgl.GeoJSONSource).setData(emptyFc());
-      return;
-    }
-    (map.getSource("orig-route") as mapboxgl.GeoJSONSource).setData({
-      type: "FeatureCollection",
-      features: [lineFrom(route.original.legs)],
-    });
-    (map.getSource("alt-route") as mapboxgl.GeoJSONSource).setData({
-      type: "FeatureCollection",
-      features: [lineFrom(route.alternative.legs)],
-    });
-  }, [route, showReroute]);
+    void check();
+    return () => { active = false; };
+  }, [loadGraph]);
 
   const animateCascade = useCallback(async (result: Simulation) => {
     for (let i = 0; i < result.waves.length; i += 1) {
@@ -287,6 +127,7 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (!apiReady) return;
     const ws = new WebSocket(streamUrl(50));
     ws.onmessage = (ev) => {
       const msg = JSON.parse(ev.data) as { type: string; timestamp?: string; timestamps?: string[]; backend?: string };
@@ -322,7 +163,7 @@ export default function App() {
     ws.onopen = () => setStatus("live stream connected");
     ws.onerror = () => setStatus("stream unavailable");
     return () => ws.close();
-  }, [loadGraph]);
+  }, [loadGraph, apiReady]);
 
   const selectedName = useMemo(() => {
     const f = graph.features.find((x) => x.properties && x.properties.id === selected);
@@ -338,9 +179,13 @@ export default function App() {
     );
   }
 
+  if (!apiReady) return <div className="startup-loading"><h1>ChainSight</h1><p role="status" aria-live="polite">{status}…</p></div>;
+
   return (
     <>
-      <div ref={containerRef} className="map" />
+      <Suspense fallback={<div className="map-loading">Loading map component…</div>}>
+        <MapView token={TOKEN} graph={graph} onNode={onNode} showCritical={showCritical} highlight={highlight} showReroute={showReroute} route={route} />
+      </Suspense>
       <div className="hud topbar">
         <div className="brand">
           <h1>ChainSight</h1>
@@ -416,6 +261,7 @@ export default function App() {
         </div>
         <input
           type="range"
+          aria-label="Historical time snapshot"
           min={0}
           max={Math.max(0, timestamps.length - 1)}
           value={cursor}
