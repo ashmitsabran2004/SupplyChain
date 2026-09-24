@@ -1,0 +1,6 @@
+{
+  "rows": 7380,
+  "val_accuracy": 0.685,
+  "val_positive_rate": 0.3407859078590786,
+  "train_positive_rate": 0.33367208672086723
+}
